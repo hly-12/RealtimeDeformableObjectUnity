@@ -1,0 +1,394 @@
+//uniform data here
+
+uint nodeCount;
+uint springCount;
+uint triCount;
+
+
+float dt;
+float nodeMass;
+float kS;
+float kD;
+float thresholdError;
+float restVolume;
+
+struct vertData
+{
+    float3 pos;
+    float2 uvs;
+    float3 norms;
+};
+struct Spring
+{
+    int i1;
+    int i2;
+    float RestLength;
+};
+
+struct Triangle
+{
+    int v0;
+    int v1;
+    int v2;
+};
+
+RWStructuredBuffer<float3> Positions;
+RWStructuredBuffer<float3> Velocities;
+RWStructuredBuffer<uint3> ForcesAsInt;
+
+RWStructuredBuffer<vertData> vertsBuff;
+
+RWStructuredBuffer<Spring> Springs;
+RWStructuredBuffer<Triangle> Triangles;
+RWStructuredBuffer<uint> TrianglePtr;
+
+RWStructuredBuffer<Triangle> Faces;
+RWStructuredBuffer<uint3> JacobianVectorUInt;
+RWStructuredBuffer<float3> Jacobian;
+RWStructuredBuffer<uint> Rhs;
+RWStructuredBuffer<uint3> temprhs;
+
+RWStructuredBuffer<uint> System;
+RWStructuredBuffer<uint> SurfacevolumeUInt;
+
+#pragma kernel updatePosKernel
+#pragma kernel MSSKernel
+#pragma kernel computenormalKernel
+
+#pragma kernel computeVolumeKernel
+#pragma kernel jacobianKernel
+#pragma kernel calculateLambdaKernel
+#pragma kernel calculateForceKernel
+
+
+// helper function for atomic add
+void AtomicAddForce(int indexIntoForce, float newForceVal, int axis) {
+    uint i_val = asuint(newForceVal);
+    uint tmp0 = 0;
+    uint tmp1;
+
+    [allow_uav_condition]
+    while (true) {
+        InterlockedCompareExchange(ForcesAsInt[indexIntoForce][axis],
+            tmp0, i_val, tmp1);
+
+        if (tmp1 == tmp0) {
+            break;
+        }
+
+        tmp0 = tmp1;
+        i_val = asuint(newForceVal + asfloat(tmp1));
+    }
+
+    return;
+}
+// helper function for atomic add
+void AtomicAddJacobian(int indexIntoJacobian, float newVal, int axis) {
+    uint i_val = asuint(newVal);
+    uint tmp0 = 0;
+    uint tmp1;
+
+    [allow_uav_condition]
+    while (true) {
+        InterlockedCompareExchange(JacobianVectorUInt[indexIntoJacobian][axis],
+            tmp0, i_val, tmp1);
+
+        if (tmp1 == tmp0) {
+            break;
+        }
+
+        tmp0 = tmp1;
+        i_val = asuint(newVal + asfloat(tmp1));
+    }
+
+    return;
+}
+void AtomicAddVolume(float newVal) {
+    uint i_val = asuint(newVal);
+    uint tmp0 = 0;
+    uint tmp1;
+
+    [allow_uav_condition]
+    while (true) {
+        InterlockedCompareExchange(SurfacevolumeUInt[0],
+            tmp0, i_val, tmp1);
+
+        if (tmp1 == tmp0) {
+            break;
+        }
+        tmp0 = tmp1;
+        i_val = asuint(newVal + asfloat(tmp1));
+    }
+    return;
+}
+
+void AtomicAddSystem(float newVal) {
+    uint i_val = asuint(newVal);
+    uint tmp0 = 0;
+    uint tmp1;
+
+    [allow_uav_condition]
+    while (true) {
+        InterlockedCompareExchange(System[0],
+            tmp0, i_val, tmp1);
+
+        if (tmp1 == tmp0) {
+            break;
+        }
+
+        tmp0 = tmp1;
+        i_val = asuint(newVal + asfloat(tmp1));
+    }
+
+    return;
+}
+void AtomicAddRhs(float newVal) {
+    uint i_val = asuint(newVal);
+    uint tmp0 = 0;
+    uint tmp1;
+
+    [allow_uav_condition]
+    while (true) {
+        InterlockedCompareExchange(Rhs[0],
+            tmp0, i_val, tmp1);
+
+        if (tmp1 == tmp0) {
+            break;
+        }
+
+        tmp0 = tmp1;
+        i_val = asuint(newVal + asfloat(tmp1));
+    }
+
+    return;
+}
+void AtomicAddTempRhs(float newVal, int axis) {
+    uint i_val = asuint(newVal);
+    uint tmp0 = 0;
+    uint tmp1;
+
+    [allow_uav_condition]
+    while (true) {
+        InterlockedCompareExchange(temprhs[0][axis],
+            tmp0, i_val, tmp1);
+
+        if (tmp1 == tmp0) {
+            break;
+        }
+
+        tmp0 = tmp1;
+        i_val = asuint(newVal + asfloat(tmp1));
+    }
+
+    return;
+}
+
+
+float3 computeSpringForce(uint i1, uint i2, float rL) {
+
+    float3 dP = Positions[i2].xyz - Positions[i1].xyz;
+    float3 dV = Velocities[i2].xyz - Velocities[i1].xyz;
+    float len = length(dP);
+    float s = kS * (len - rL);
+    float d = (dot(dV, dP) / len) * kD;
+    float3 spforce = (s + d) * dP / len;
+    return spforce;
+}
+float Rounding(float x, int digit)
+{
+    return (floor((x)*pow(10.0f, digit) + 0.5f) / pow(10.0f, digit));
+}
+
+[numthreads(1024, 1, 1)]
+void updatePosKernel(uint3 i : SV_DispatchThreadID) {
+    if (i.x >= nodeCount) return;
+
+    float3 gravity = float3(0.0f, -9.81f, 0.0f);
+    float3 position = Positions[i.x];
+    float3 velocity = Velocities[i.x];
+
+    float3 force = float3(0.0f, 0.0f, 0.0f);
+
+   force.x = asfloat(ForcesAsInt[i.x].x);
+   force.y = asfloat(ForcesAsInt[i.x].y);
+   force.z = asfloat(ForcesAsInt[i.x].z);
+
+    float3 acc = gravity + force;
+
+    velocity = velocity + acc * dt;
+    position = position + velocity * dt;
+    Positions[i.x] = position;
+    Velocities[i.x] = velocity;
+
+    
+    ForcesAsInt[i.x] = uint3(0, 0, 0);
+    JacobianVectorUInt[i.x] = uint3(0, 0, 0);
+    Jacobian[i.x] = float3(0, 0, 0);
+    
+    SurfacevolumeUInt[0] = 0;
+    if (Positions[i.x].y < 0.0f)
+    {
+        Positions[i.x].y = 0.001f;
+        Velocities[i.x] *= -0.1f;
+        //Velocities[i.x] = float3(0.0f, 0.0f, 0.0f);
+    }
+
+    vertsBuff[i.x].pos = Positions[i.x];
+}
+[numthreads(1024, 1, 1)]
+void MSSKernel(uint3 i : SV_DispatchThreadID) {
+    if (i.x >= springCount) return;
+
+    Spring spring = Springs[i.x];
+    int i1 = spring.i1;
+    int i2 = spring.i2;
+    float rL = spring.RestLength;
+
+    float3 spForce = computeSpringForce(i1, i2, rL);
+    AtomicAddForce(i1, spForce.x, 0);
+    AtomicAddForce(i1, spForce.y, 1);
+    AtomicAddForce(i1, spForce.z, 2);
+
+    AtomicAddForce(i2, -spForce.x, 0);
+    AtomicAddForce(i2, -spForce.y, 1);
+    AtomicAddForce(i2, -spForce.z, 2);
+}
+
+[numthreads(1024, 1, 1)]
+void computeVolumeKernel(uint3 i : SV_DispatchThreadID) {
+    if (i.x >= triCount) return;
+    Rhs[0] = 0;
+    temprhs[0] = uint3(0, 0, 0);
+    System[0] = 0;
+    Triangle tri = Faces[i.x];
+    uint i1 = tri.v0;
+    uint i2 = tri.v1;
+    uint i3 = tri.v2;
+
+    float3 pos1 = Positions[i1].xyz;
+    float3 pos2 = Positions[i2].xyz;
+    float3 pos3 = Positions[i3].xyz;
+
+   /* AtomicAddJacobian(i1, 0.5f * (pos3.y * pos2.z - pos2.y * pos3.z), 0);
+    AtomicAddJacobian(i1, 0.5f * (-pos3.x * pos2.z + pos2.x * pos3.z), 1);
+    AtomicAddJacobian(i1, 0.5f * (pos3.x * pos2.y - pos2.x * pos3.y), 2);
+    AtomicAddJacobian(i2, 0.5f * (-pos3.y * pos1.z + pos1.y * pos3.z), 0);
+    AtomicAddJacobian(i2, 0.5f * (pos3.x * pos1.z - pos1.x * pos3.z), 1);
+    AtomicAddJacobian(i2, 0.5f * (-pos3.x * pos1.y + pos1.x * pos3.y), 2);
+    AtomicAddJacobian(i3, 0.5f * (pos2.y * pos1.z - pos1.y * pos2.z), 0);
+    AtomicAddJacobian(i3, 0.5f * (-pos2.x * pos1.z + pos1.x * pos2.z), 1);
+    AtomicAddJacobian(i3, 0.5f * (pos2.x * pos1.y - pos1.x * pos2.y), 2);*/
+
+    //atomic add volume
+    float area = 0.5f * length(cross(pos2 - pos1, pos3 - pos1));
+    float3 tmp = area * (pos1 + pos2 + pos3);
+    float3 norm = normalize(cross(pos2 - pos1, pos3 - pos1));
+
+    AtomicAddVolume(1 / 9.0f * dot(tmp, norm));
+    
+}
+
+[numthreads(1024, 1, 1)]
+void jacobianKernel(uint3 i : SV_DispatchThreadID) {
+    if (i.x >= nodeCount) return;
+   
+    int start = TrianglePtr[i.x];
+    int end = TrianglePtr[i.x + 1];
+
+    for (int j = start; j < end; j++) {
+        Triangle t = Triangles[j];
+        float3 pos1 = Positions[t.v0];
+        float3 pos2 = Positions[t.v1];
+        float3 pos3 = Positions[t.v2];
+        if (i.x == t.v0) {
+            Jacobian[i.x].x += (0.5f * (pos3.y * pos2.z - pos2.y * pos3.z));
+            Jacobian[i.x].y += (0.5f * (-pos3.x * pos2.z + pos2.x * pos3.z));
+            Jacobian[i.x].z += (0.5f * (pos3.x * pos2.y - pos2.x * pos3.y));
+        }
+        else if (i.x == t.v1) {
+            Jacobian[i.x].x +=  (0.5f * (-pos3.y * pos1.z + pos1.y * pos3.z));
+            Jacobian[i.x].y +=  (0.5f * (pos3.x * pos1.z - pos1.x * pos3.z));
+            Jacobian[i.x].z +=  (0.5f * (-pos3.x * pos1.y + pos1.x * pos3.y));
+        }
+        else if (i.x == t.v2) {
+            Jacobian[i.x].x +=  (0.5f * (pos2.y * pos1.z - pos1.y * pos2.z));
+            Jacobian[i.x].y +=  (0.5f * (-pos2.x * pos1.z + pos1.x * pos2.z));
+            Jacobian[i.x].z +=  (0.5f * (pos2.x * pos1.y - pos1.x * pos2.y));
+        }
+    }
+}
+
+
+
+
+[numthreads(1024, 1, 1)]
+void calculateLambdaKernel(uint3 i : SV_DispatchThreadID) {
+    if (i.x >= nodeCount) return;
+
+  /*  float3 tmpJacobian = float3(asfloat(JacobianVectorUInt[i.x].x),
+        asfloat(JacobianVectorUInt[i.x].y),
+        asfloat(JacobianVectorUInt[i.x].z));*/
+    float3 tmpJacobian = Jacobian[i.x];
+    float s = tmpJacobian.x * tmpJacobian.x
+        + tmpJacobian.y * tmpJacobian.y
+        + tmpJacobian.z * tmpJacobian.z;
+
+    AtomicAddSystem(s);
+    //AtomicAddSystem(2.0f);
+
+    if (i.x == 0) {
+        float phi = (asfloat(SurfacevolumeUInt[0]) - restVolume);
+     
+        AtomicAddRhs(phi / dt * dt);
+    }
+    float3 gravity = float3(0.0f, -9.81f, 0.0f);
+    float3 force = float3(asfloat(ForcesAsInt[i.x].x), asfloat(ForcesAsInt[i.x].y), asfloat(ForcesAsInt[i.x].z));
+
+    float3 tempVelocity = float3(0.0f, 0.0f, 0.0f);
+    tempVelocity = (Velocities[i.x].xyz / dt) + gravity + force;
+
+    AtomicAddTempRhs(tmpJacobian.x * tempVelocity.x, 0);
+    AtomicAddTempRhs(tmpJacobian.y * tempVelocity.y, 1);
+    AtomicAddTempRhs(tmpJacobian.z * tempVelocity.z, 2);
+
+    //float3 tmpRhs = cross(tmpJacobian, tempVelocity);
+    //
+    //AtomicAddRhs(tmpRhs.x + tmpRhs.y + tmpRhs.z);
+    
+}
+[numthreads(1024, 1, 1)]
+void calculateForceKernel(uint3 i : SV_DispatchThreadID) {
+    if (i.x >= nodeCount) return;
+
+    float tempX = asfloat(temprhs[0].x);
+    float tempY = asfloat(temprhs[0].y);
+    float tempZ = asfloat(temprhs[0].z);
+    float LM = (tempX+ tempY+ tempZ+ asfloat(Rhs[0])) / asfloat(System[0]);
+
+   /* AtomicAddForce(i.x, -asfloat(JacobianVectorUInt[i.x].x) * LM, 0);
+    AtomicAddForce(i.x, -asfloat(JacobianVectorUInt[i.x].y) * LM, 1);
+    AtomicAddForce(i.x, -asfloat(JacobianVectorUInt[i.x].z) * LM, 2);*/
+    AtomicAddForce(i.x, -Jacobian[i.x].x * LM, 0);
+    AtomicAddForce(i.x, -Jacobian[i.x].y * LM, 1);
+    AtomicAddForce(i.x, -Jacobian[i.x].z * LM, 2);
+
+}
+[numthreads(1024, 1, 1)]
+void computenormalKernel(uint3 i : SV_DispatchThreadID) {
+    if (i.x >= nodeCount) return;
+
+    float3 norm = float3(0, 0, 0);
+    int start = TrianglePtr[i.x];
+    int end = TrianglePtr[i.x + 1];
+
+    for (int j = start; j < end; j++) {
+        Triangle t = Triangles[j];
+        float3 v1 = Positions[t.v0];
+        float3 v2 = Positions[t.v1];
+        float3 v3 = Positions[t.v2];
+
+        float3 N = cross(v2 - v1, v3 - v1);
+        norm += N;
+    }
+    vertsBuff[i.x].norms = normalize(norm);
+}
