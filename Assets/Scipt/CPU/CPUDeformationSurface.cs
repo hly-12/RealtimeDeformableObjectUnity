@@ -264,58 +264,58 @@ public class CPUDeformationSurface : MonoBehaviour
             wStar[i] = (Velocities[i].z / dt) + gravity.z + Forces[i].z;
         }
         // Calculate Jacobian vector 
-        //for (int i = 0; i < triCount; i++)
-        //{
-        //    int i1 = triArray[i * 3 + 0];
-        //    int i2 = triArray[i * 3 + 1];
-        //    int i3 = triArray[i * 3 + 2];
-
-        //    //pos1 = Positions[]
-        //    Vector3 pos1 = Positions[i1];
-        //    Vector3 pos2 = Positions[i2];
-        //    Vector3 pos3 = Positions[i3];
-
-        //    jacobianVector[i1].x += 0.5f * (pos3.y * pos2.z - pos2.y * pos3.z);
-        //    jacobianVector[i1].y += 0.5f * (-pos3.x * pos2.z + pos2.x * pos3.z);
-        //    jacobianVector[i1].z += 0.5f * (pos3.x * pos2.y - pos2.x * pos3.y);
-        //    jacobianVector[i2].x += 0.5f * (-pos3.y * pos1.z + pos1.y * pos3.z);
-        //    jacobianVector[i2].y += 0.5f * (pos3.x * pos1.z - pos1.x * pos3.z);
-        //    jacobianVector[i2].z += 0.5f * (-pos3.x * pos1.y + pos1.x * pos3.y);
-        //    jacobianVector[i3].x += 0.5f * (pos2.y * pos1.z - pos1.y * pos2.z);
-        //    jacobianVector[i3].y += 0.5f * (-pos2.x * pos1.z + pos1.x * pos2.z);
-        //    jacobianVector[i3].z += 0.5f * (pos2.x * pos1.y - pos1.x * pos2.y);
-        //}
-
-        for (int i = 0; i < nodeCount; i++)
+        for (int i = 0; i < triCount; i++)
         {
-            int s = initTrianglePtr[i];
-            int e = initTrianglePtr[i+1];
+            int i1 = triArray[i * 3 + 0];
+            int i2 = triArray[i * 3 + 1];
+            int i3 = triArray[i * 3 + 2];
 
-            for (int j = s; j < e; j++)
-            {
-                Triangle t = initTriangle[j];
+            //pos1 = Positions[]
+            Vector3 pos1 = Positions[i1];
+            Vector3 pos2 = Positions[i2];
+            Vector3 pos3 = Positions[i3];
 
-                Vector3 pos1 = Positions[t.v0];
-                Vector3 pos2 = Positions[t.v1];
-                Vector3 pos3 = Positions[t.v2];
-
-                if (i == t.v0) {
-                    jacobianVector[i].x += 0.5f * (pos3.y * pos2.z - pos2.y * pos3.z);
-                    jacobianVector[i].y += 0.5f * (-pos3.x * pos2.z + pos2.x * pos3.z);
-                    jacobianVector[i].z += 0.5f * (pos3.x * pos2.y - pos2.x * pos3.y);
-                }
-                else if (i == t.v1) {
-                    jacobianVector[i].x += 0.5f * (-pos3.y * pos1.z + pos1.y * pos3.z);
-                    jacobianVector[i].y += 0.5f * (pos3.x * pos1.z - pos1.x * pos3.z);
-                    jacobianVector[i].z += 0.5f * (-pos3.x * pos1.y + pos1.x * pos3.y);
-                }
-                else if (i == t.v2) {
-                    jacobianVector[i].x += 0.5f * (pos2.y * pos1.z - pos1.y * pos2.z);
-                    jacobianVector[i].y += 0.5f * (-pos2.x * pos1.z + pos1.x * pos2.z);
-                    jacobianVector[i].z += 0.5f * (pos2.x * pos1.y - pos1.x * pos2.y);
-                }
-            }
+            jacobianVector[i1].x += 0.5f * (pos3.y * pos2.z - pos2.y * pos3.z);
+            jacobianVector[i1].y += 0.5f * (-pos3.x * pos2.z + pos2.x * pos3.z);
+            jacobianVector[i1].z += 0.5f * (pos3.x * pos2.y - pos2.x * pos3.y);
+            jacobianVector[i2].x += 0.5f * (-pos3.y * pos1.z + pos1.y * pos3.z);
+            jacobianVector[i2].y += 0.5f * (pos3.x * pos1.z - pos1.x * pos3.z);
+            jacobianVector[i2].z += 0.5f * (-pos3.x * pos1.y + pos1.x * pos3.y);
+            jacobianVector[i3].x += 0.5f * (pos2.y * pos1.z - pos1.y * pos2.z);
+            jacobianVector[i3].y += 0.5f * (-pos2.x * pos1.z + pos1.x * pos2.z);
+            jacobianVector[i3].z += 0.5f * (pos2.x * pos1.y - pos1.x * pos2.y);
         }
+
+        //for (int i = 0; i < nodeCount; i++)
+        //{
+        //    int s = initTrianglePtr[i];
+        //    int e = initTrianglePtr[i+1];
+
+        //    for (int j = s; j < e; j++)
+        //    {
+        //        Triangle t = initTriangle[j];
+
+        //        Vector3 pos1 = Positions[t.v0];
+        //        Vector3 pos2 = Positions[t.v1];
+        //        Vector3 pos3 = Positions[t.v2];
+
+        //        if (i == t.v0) {
+        //            jacobianVector[i].x += 0.5f * (pos3.y * pos2.z - pos2.y * pos3.z);
+        //            jacobianVector[i].y += 0.5f * (-pos3.x * pos2.z + pos2.x * pos3.z);
+        //            jacobianVector[i].z += 0.5f * (pos3.x * pos2.y - pos2.x * pos3.y);
+        //        }
+        //        else if (i == t.v1) {
+        //            jacobianVector[i].x += 0.5f * (-pos3.y * pos1.z + pos1.y * pos3.z);
+        //            jacobianVector[i].y += 0.5f * (pos3.x * pos1.z - pos1.x * pos3.z);
+        //            jacobianVector[i].z += 0.5f * (-pos3.x * pos1.y + pos1.x * pos3.y);
+        //        }
+        //        else if (i == t.v2) {
+        //            jacobianVector[i].x += 0.5f * (pos2.y * pos1.z - pos1.y * pos2.z);
+        //            jacobianVector[i].y += 0.5f * (-pos2.x * pos1.z + pos1.x * pos2.z);
+        //            jacobianVector[i].z += 0.5f * (pos2.x * pos1.y - pos1.x * pos2.y);
+        //        }
+        //    }
+        //}
 
         // Build system to solve for Lagrange Multipliers	
         // Create system: sys = phiq * phiq'
@@ -330,14 +330,8 @@ public class CPUDeformationSurface : MonoBehaviour
         // Calculate current error 
         //print(system);
         //print(computeSurfaceVolume());
-        float phi = (computeSurfaceVolume() - totalVolume);
-        if (phi > -thresholdError || phi < thresholdError)
-            phi = 0.0f;
+        float phi = (totalVolume- computeSurfaceVolume());
 
-        print(phi);
-
-        //phi = Rounding(phi, 1);
-        //print("phi :: " +phi);
         rhs = phi / (dt * dt);
         float tempX = 0.0f;
         float tempY = 0.0f;
