@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using UnityEngine;
 
 namespace Assets.script
 {
@@ -53,4 +54,12 @@ namespace Assets.script
         public uint deltaYInt;
         public uint deltaZInt;
     }
+
+    public struct AABB
+    {
+        public Vector3 Min;
+        public Vector3 Max;
+        public Vector3 Center;
+    }
+
 }

@@ -51,11 +51,18 @@ public class CPUDeformationSurface : MonoBehaviour
     public float kStiffness = 100.0f;
     public float kDamping = 1.0f;
 
+    [Header("Rendering")]
+    public Shader renderingShader;
+    public Color matColor;
+    public bool renderVolume;
+
     [HideInInspector]
     private int nodeCount;
     private int springCount;
     private int triCount; // size of triangle
     private int tetCount;
+
+    private Material material;
 
     //main  property
     //list position
@@ -75,8 +82,12 @@ public class CPUDeformationSurface : MonoBehaviour
     //for render
     ComputeBuffer vertsBuff = null;
     ComputeBuffer triBuffer = null;
-    [Header("Rendering")]
-    public Material material;
+
+
+    //for collision detection
+    [Header("Object Collision")]
+    public CPUDeformationSurface[] deformableObjList;
+    public bool renderBoundingBox = false;
 
     struct vertData
     {
@@ -87,6 +98,11 @@ public class CPUDeformationSurface : MonoBehaviour
     int[] triArray;
     vertData[] vDataArray;
     private static GameObject obj;
+
+    private AABB boundingBox;
+
+    public List<AABB> boundingBoxpair = new List<AABB>();
+
 
     void SelectModelName()
     {
@@ -191,13 +207,78 @@ public class CPUDeformationSurface : MonoBehaviour
         material.SetMatrix("invTRSMatrix", trs.inverse);
     }
 
+    private void initAABB()
+    {
+        Vector3 min = Positions[0];
+        Vector3 max = Positions[0];
+        for (int i = 0; i < nodeCount; i++)
+        {
+
+            max.x = Mathf.Max(max.x, Positions[i].x);
+            max.y = Mathf.Max(max.y, Positions[i].y);
+            max.z = Mathf.Max(max.z, Positions[i].z);
+
+            min.x = Mathf.Min(min.x, Positions[i].x);
+            min.y = Mathf.Min(min.y, Positions[i].y);
+            min.z = Mathf.Min(min.z, Positions[i].z);
+            
+        }
+
+        boundingBox.Max = max;
+        boundingBox.Min = min;
+        boundingBox.Center = (min+max)/2;
+
+
+        //print(min);
+        //print(max);
+        //print((min + max) / 2);
+
+
+    }
+
+    private void updateAABB()
+    {
+        Vector3 min = Positions[0];
+        Vector3 max = Positions[0];
+        for (int i = 0; i < nodeCount; i++)
+        {
+
+            max.x = Mathf.Max(max.x, Positions[i].x);
+            max.y = Mathf.Max(max.y, Positions[i].y);
+            max.z = Mathf.Max(max.z, Positions[i].z);
+
+            min.x = Mathf.Min(min.x, Positions[i].x);
+            min.y = Mathf.Min(min.y, Positions[i].y);
+            min.z = Mathf.Min(min.z, Positions[i].z);
+
+        }
+
+        boundingBox.Max = max;
+        boundingBox.Min = min;
+        boundingBox.Center = (min + max) / 2;
+    }
+
+    
+
     void setup()
     {
         obj = gameObject;
+
+        material = new Material(renderingShader); // new material for difference object
+        material.color = matColor; //set color to material
+
         SelectModelName();
         setupMeshData();
         setupShader();
         setBuffData();
+        initAABB();
+
+        //broad phrase (assign AABB pair)
+        foreach (CPUDeformationSurface obj in deformableObjList)
+        {
+            boundingBoxpair.Add(obj.boundingBox);
+        }
+
 
         print("nodes :: " + nodeCount);
         print("tris :: " + triCount);
@@ -264,58 +345,58 @@ public class CPUDeformationSurface : MonoBehaviour
             wStar[i] = (Velocities[i].z / dt) + gravity.z + Forces[i].z;
         }
         // Calculate Jacobian vector 
-        //for (int i = 0; i < triCount; i++)
-        //{
-        //    int i1 = triArray[i * 3 + 0];
-        //    int i2 = triArray[i * 3 + 1];
-        //    int i3 = triArray[i * 3 + 2];
-
-        //    //pos1 = Positions[]
-        //    Vector3 pos1 = Positions[i1];
-        //    Vector3 pos2 = Positions[i2];
-        //    Vector3 pos3 = Positions[i3];
-
-        //    jacobianVector[i1].x += 0.5f * (pos3.y * pos2.z - pos2.y * pos3.z);
-        //    jacobianVector[i1].y += 0.5f * (-pos3.x * pos2.z + pos2.x * pos3.z);
-        //    jacobianVector[i1].z += 0.5f * (pos3.x * pos2.y - pos2.x * pos3.y);
-        //    jacobianVector[i2].x += 0.5f * (-pos3.y * pos1.z + pos1.y * pos3.z);
-        //    jacobianVector[i2].y += 0.5f * (pos3.x * pos1.z - pos1.x * pos3.z);
-        //    jacobianVector[i2].z += 0.5f * (-pos3.x * pos1.y + pos1.x * pos3.y);
-        //    jacobianVector[i3].x += 0.5f * (pos2.y * pos1.z - pos1.y * pos2.z);
-        //    jacobianVector[i3].y += 0.5f * (-pos2.x * pos1.z + pos1.x * pos2.z);
-        //    jacobianVector[i3].z += 0.5f * (pos2.x * pos1.y - pos1.x * pos2.y);
-        //}
-
-        for (int i = 0; i < nodeCount; i++)
+        for (int i = 0; i < triCount; i++)
         {
-            int s = initTrianglePtr[i];
-            int e = initTrianglePtr[i+1];
+            int i1 = triArray[i * 3 + 0];
+            int i2 = triArray[i * 3 + 1];
+            int i3 = triArray[i * 3 + 2];
 
-            for (int j = s; j < e; j++)
-            {
-                Triangle t = initTriangle[j];
+            //pos1 = Positions[]
+            Vector3 pos1 = Positions[i1];
+            Vector3 pos2 = Positions[i2];
+            Vector3 pos3 = Positions[i3];
 
-                Vector3 pos1 = Positions[t.v0];
-                Vector3 pos2 = Positions[t.v1];
-                Vector3 pos3 = Positions[t.v2];
-
-                if (i == t.v0) {
-                    jacobianVector[i].x += 0.5f * (pos3.y * pos2.z - pos2.y * pos3.z);
-                    jacobianVector[i].y += 0.5f * (-pos3.x * pos2.z + pos2.x * pos3.z);
-                    jacobianVector[i].z += 0.5f * (pos3.x * pos2.y - pos2.x * pos3.y);
-                }
-                else if (i == t.v1) {
-                    jacobianVector[i].x += 0.5f * (-pos3.y * pos1.z + pos1.y * pos3.z);
-                    jacobianVector[i].y += 0.5f * (pos3.x * pos1.z - pos1.x * pos3.z);
-                    jacobianVector[i].z += 0.5f * (-pos3.x * pos1.y + pos1.x * pos3.y);
-                }
-                else if (i == t.v2) {
-                    jacobianVector[i].x += 0.5f * (pos2.y * pos1.z - pos1.y * pos2.z);
-                    jacobianVector[i].y += 0.5f * (-pos2.x * pos1.z + pos1.x * pos2.z);
-                    jacobianVector[i].z += 0.5f * (pos2.x * pos1.y - pos1.x * pos2.y);
-                }
-            }
+            jacobianVector[i1].x += 0.5f * (pos3.y * pos2.z - pos2.y * pos3.z);
+            jacobianVector[i1].y += 0.5f * (-pos3.x * pos2.z + pos2.x * pos3.z);
+            jacobianVector[i1].z += 0.5f * (pos3.x * pos2.y - pos2.x * pos3.y);
+            jacobianVector[i2].x += 0.5f * (-pos3.y * pos1.z + pos1.y * pos3.z);
+            jacobianVector[i2].y += 0.5f * (pos3.x * pos1.z - pos1.x * pos3.z);
+            jacobianVector[i2].z += 0.5f * (-pos3.x * pos1.y + pos1.x * pos3.y);
+            jacobianVector[i3].x += 0.5f * (pos2.y * pos1.z - pos1.y * pos2.z);
+            jacobianVector[i3].y += 0.5f * (-pos2.x * pos1.z + pos1.x * pos2.z);
+            jacobianVector[i3].z += 0.5f * (pos2.x * pos1.y - pos1.x * pos2.y);
         }
+
+        //for (int i = 0; i < nodeCount; i++)
+        //{
+        //    int s = initTrianglePtr[i];
+        //    int e = initTrianglePtr[i+1];
+
+        //    for (int j = s; j < e; j++)
+        //    {
+        //        Triangle t = initTriangle[j];
+
+        //        Vector3 pos1 = Positions[t.v0];
+        //        Vector3 pos2 = Positions[t.v1];
+        //        Vector3 pos3 = Positions[t.v2];
+
+        //        if (i == t.v0) {
+        //            jacobianVector[i].x += 0.5f * (pos3.y * pos2.z - pos2.y * pos3.z);
+        //            jacobianVector[i].y += 0.5f * (-pos3.x * pos2.z + pos2.x * pos3.z);
+        //            jacobianVector[i].z += 0.5f * (pos3.x * pos2.y - pos2.x * pos3.y);
+        //        }
+        //        else if (i == t.v1) {
+        //            jacobianVector[i].x += 0.5f * (-pos3.y * pos1.z + pos1.y * pos3.z);
+        //            jacobianVector[i].y += 0.5f * (pos3.x * pos1.z - pos1.x * pos3.z);
+        //            jacobianVector[i].z += 0.5f * (-pos3.x * pos1.y + pos1.x * pos3.y);
+        //        }
+        //        else if (i == t.v2) {
+        //            jacobianVector[i].x += 0.5f * (pos2.y * pos1.z - pos1.y * pos2.z);
+        //            jacobianVector[i].y += 0.5f * (-pos2.x * pos1.z + pos1.x * pos2.z);
+        //            jacobianVector[i].z += 0.5f * (pos2.x * pos1.y - pos1.x * pos2.y);
+        //        }
+        //    }
+        //}
 
         // Build system to solve for Lagrange Multipliers	
         // Create system: sys = phiq * phiq'
@@ -330,14 +411,8 @@ public class CPUDeformationSurface : MonoBehaviour
         // Calculate current error 
         //print(system);
         //print(computeSurfaceVolume());
-        float phi = (computeSurfaceVolume() - totalVolume);
-        if (phi > -thresholdError || phi < thresholdError)
-            phi = 0.0f;
+        float phi = (totalVolume- computeSurfaceVolume());
 
-        print(phi);
-
-        //phi = Rounding(phi, 1);
-        //print("phi :: " +phi);
         rhs = phi / (dt * dt);
         float tempX = 0.0f;
         float tempY = 0.0f;
@@ -408,6 +483,21 @@ public class CPUDeformationSurface : MonoBehaviour
         }
     }
     int frame = 0;
+
+    private void AABBCollisionDetectionResponse()
+    {
+        foreach (CPUDeformationSurface obj in deformableObjList)
+        {
+            if (IsCollided(boundingBox, obj.boundingBox))
+            {
+                //response
+                for (int i = 0; i < nodeCount; i++)
+                {
+                    Velocities[i] *= -1.0f;
+                }
+            }
+        }
+    }
     void Update()
     {
         for (int i = 0; i < speed; i++)
@@ -415,8 +505,11 @@ public class CPUDeformationSurface : MonoBehaviour
             computeSpringForce();
             globalVolumePreservation();
             UpdateNodes();
+
+            updateAABB();
+            AABBCollisionDetectionResponse();
         }
-       
+
         frame++;
         //print("totale volume :"+totalVolume);
         computeVertexNormal();
@@ -429,15 +522,7 @@ public class CPUDeformationSurface : MonoBehaviour
         if (Input.GetKey(KeyCode.Escape))
             UnityEditor.EditorApplication.isPlaying = false;
     }
-    private float computeTetraVolume(Vector3 i1, Vector3 i2, Vector3 i3, Vector3 i4)
-    {
-        float volume = 0.0f;
 
-
-        volume = 1 / 6.0f * Mathf.Abs(Vector3.Dot(i1 - i4, Vector3.Cross(i2-i4,i3-i4)));
-
-        return volume;
-    }
     private float calculateTriArea(Vector3 p1, Vector3 p2, Vector3 p3)
     {
         float area = 0.0f;
@@ -490,69 +575,63 @@ public class CPUDeformationSurface : MonoBehaviour
 
         return currentVolume/3.0f;
     }
-    private float computeSurfaceVolumeDT()
-    {
-        float vol = 0.0f;
-        for (int i = 0; i < triCount; i++)
-        {
-            int i1 = triArray[i * 3 + 0];
-            int i2 = triArray[i * 3 + 1];
-            int i3 = triArray[i * 3 + 2];
 
-            //pos1 = Positions[]
-            Vector3 pos1 = Positions[i1];
-            Vector3 pos2 = Positions[i2];
-            Vector3 pos3 = Positions[i3];
-            Vector3 norm = Vector3.Cross(pos2-pos1, pos3 - pos1);
-
-            vol += Vector3.Dot(pos1, norm);
-        }
-
-        return vol / 6.0f;
-
-    }
-    private float computeSurfaceVolumeDT2()
-    {
-        float vol = 0.0f;
-        for (int i = 0; i < triCount; i++)
-        {
-            int i1 = triArray[i * 3 + 0];
-            int i2 = triArray[i * 3 + 1];
-            int i3 = triArray[i * 3 + 2];
-
-            //pos1 = Positions[]
-            Vector3 pos1 = Positions[i1];
-            Vector3 pos2 = Positions[i2];
-            Vector3 pos3 = Positions[i3];
-
-            float area = calculateTriArea(pos1, pos2, pos3);
-            Vector3 tmp = area * (pos1 + pos2 + pos3);
-            Vector3 norm = Vector3.Cross(pos2 - pos1, pos3 - pos1).normalized;
-
-            vol += Vector3.Dot(tmp, norm);
-
-        }
-
-
-
-        return vol / 9.0f;
-    }
     private void OnGUI()
     {
-        int w = Screen.width, h = Screen.height;
-        GUIStyle style = new GUIStyle();
-        Rect rect = new Rect(0, 0, w, h * 2 / 100);
-        style.alignment = TextAnchor.UpperLeft;
-        style.fontSize = h * 2 / 50;
-        style.normal.textColor = new Color(1, 1, 1, 1.0f);
+        if (renderVolume)
+        {
+            int w = Screen.width, h = Screen.height;
+            GUIStyle style = new GUIStyle();
+            Rect rect = new Rect(0, 0, w, h * 2 / 100);
+            style.alignment = TextAnchor.UpperLeft;
+            style.fontSize = h * 2 / 50;
+            style.normal.textColor = new Color(1, 1, 1, 1.0f);
 
-        float currVolume = 0;
-        currVolume = computeSurfaceVolume();
+            float currVolume = 0;
+            currVolume = computeSurfaceVolume();
 
-        float vLost = (currVolume / totalVolume) * 100.0f;
-        string text = string.Format("Volume: {0:0.00} %", vLost);
-        GUI.Label(rect, text, style);
+            float vLost = (currVolume / totalVolume) * 100.0f;
+            string text = string.Format("Volume: {0:0.00} %", vLost);
+            GUI.Label(rect, text, style);
+        }
     }
+
+    public bool IsCollided(AABB boundingBoxA,AABB boundingBoxB)
+    {
+        return (boundingBoxA.Max.x > boundingBoxB.Min.x &&
+            boundingBoxA.Min.x < boundingBoxB.Max.x &&
+            boundingBoxA.Max.y > boundingBoxB.Min.y &&
+            boundingBoxA.Min.y < boundingBoxB.Max.y &&
+            boundingBoxA.Max.z > boundingBoxB.Min.z &&
+            boundingBoxA.Min.z < boundingBoxB.Max.z);
+    }
+
+    private void OnDrawGizmos()
+    {
+
+        if (renderBoundingBox)
+        {
+            Gizmos.color = Color.yellow;
+            foreach (CPUDeformationSurface obj in deformableObjList)
+            {
+                if (IsCollided(boundingBox, obj.boundingBox))
+                {
+                    Gizmos.color = Color.red;
+                    print("collide");
+                }
+                        
+            }
+
+            Vector3 size = new Vector3(
+                Mathf.Abs(boundingBox.Max.x - boundingBox.Min.x),
+                Mathf.Abs(boundingBox.Max.y - boundingBox.Min.y),
+                Mathf.Abs(boundingBox.Max.z - boundingBox.Min.z)
+                );
+            Gizmos.DrawWireCube(boundingBox.Center, size);
+        }
+
+    }
+
 
     private void OnDestroy()
     {

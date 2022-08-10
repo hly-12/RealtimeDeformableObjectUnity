@@ -46,7 +46,7 @@ public class GPUGlobalDeformation : MonoBehaviour
     public float thresholdError = 0.000001f;
 
     [Header("Simulation Parameter")]
-    public ComputeShader computeShader;
+    public ComputeShader computeShaderObject;
     public int speed = 1;
 
     [Header("Geometric Parameters")]
@@ -120,13 +120,12 @@ public class GPUGlobalDeformation : MonoBehaviour
     private int calculateLambdaKernel;
     private int calculateForceKernel;
 
-
-
-
-    //
-
     [Header("Rendering")]
-    public Material material;
+    public Shader renderingShader;
+    public Color matColor;
+
+    private Material material;
+    private ComputeShader computeShader;
 
     struct vertData
     {
@@ -434,6 +433,11 @@ public class GPUGlobalDeformation : MonoBehaviour
     void setup()
     {
         obj = gameObject;
+
+        material = new Material(renderingShader); // new material for difference object
+        material.color = matColor; //set color to material
+        computeShader = Instantiate(computeShaderObject); // to instantiate the compute shader to be use with multiple object
+
         SelectModelName();
         setupMeshData();
         setupShader();
